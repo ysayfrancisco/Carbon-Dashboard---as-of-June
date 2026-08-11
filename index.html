@@ -1865,27 +1865,16 @@ const CHAN_SPEND_KEY = {
 };
 
 function aggChannelSpend(){
-  const ew=effWeeks();const ep=SEL_PROPS;
-  const applyMonth=SEL_MONTHS.length>0;
-  const rows=EXPENSE_DATA.filter(r=>{
-    if(ep.length>0&&!ep.includes(r.property))return false;
-    if(ew.length>0&&!ew.includes(r.week))return false;
-    if(applyMonth&&!SEL_MONTHS.includes(r.month))return false;
-    return true;
-  });
-  const spend={};
-  Object.keys(CHAN_SPEND_KEY).forEach(ch=>{
-    const key=CHAN_SPEND_KEY[ch];
-    spend[ch]=rows.reduce((s,r)=>s+(r[key]||0),0);
-  });
-  if(ew.length===0){
-    const ep2=ep.length>0?ep:Object.keys(APTS_MONTHLY_OVERRIDE);
-    const monthsForOverride2=applyMonth?SEL_MONTHS:[...new Set(rows.map(function(r){return r.month;})).values()];
-    let correctedApts=0;
-    ep2.forEach(function(prop){monthsForOverride2.forEach(function(m){correctedApts+=((APTS_MONTHLY_OVERRIDE[prop]||{})[m]||0);});});
-    spend['Apartments.com']=correctedApts;
-  }
-  return spend;
+  // Use the same reconciled expense aggregation as the property/expense views.
+  // This keeps CPL and Cost/Lease consistent for every paid source.
+  const T=aggExpense().T;
+  return {
+    'Google Ads': T.gads||0,
+    'Facebook': T.meta||0,
+    'Zillow': T.zillow||0,
+    'Apartments.com': T.apts||0,
+    'Yelp': T.yelp||0,
+  };
 }
 
 function selProp(name){
@@ -1937,7 +1926,7 @@ function drilldown(sp,camps){
   mkC('chart-drill','bar',{labels:camps.map(c=>c.name),datasets:[{label:'Leads',data:camps.map(c=>c.leads),backgroundColor:COLORS,borderRadius:4}]},{scales:{x:{ticks:{font:{size:10},maxRotation:30}},y:{ticks:{font:{size:10}}}}});
 
   const propExp=aggExpense();
-  const propExpRow=propExp.byProp.find(e=>e.property===sp.name)||{gads:0,meta:0,zillow:0,apts:0,total:0};
+  const propExpRow=propExp.byProp.find(e=>e.property===sp.name)||{gads:0,meta:0,zillow:0,apts:0,yelp:0,total:0};
 
   const campsWithSpend=camps.map(c=>{
     const key=CHAN_SPEND_KEY[c.name];
@@ -2038,7 +2027,7 @@ function renderChanTbl(camps, chanSpend){
     <td class="mono" style="color:${cpLeaseColor(c.cpLease)}">${c.cpLease!=null?fmtUSD(c.cpLease):'—'}</td>
   </tr>`,false,chTot,t=>`<tr><td>All Channels</td><td class="mono">${fmt(t.leads)}</td><td class="mono">${fmt(t.engaged)}</td><td class="mono">${pct(t.engRate)}</td><td class="mono">${fmt(t.toursB)}</td><td class="mono">${fmt(t.toursA)}</td><td class="mono">${chAtt!=null?pct(chAtt):'—'}</td><td class="mono">${fmt(t.leases)}</td><td><span class="badge">${pct(t.l2l)}</span></td><td class="mono">${t.spend>0?fmtUSD(t.spend):'—'}</td><td class="mono">${t.cpl!=null?fmtUSD(t.cpl):'—'}</td><td class="mono">${t.cpLease!=null?fmtUSD(t.cpLease):'—'}</td></tr>`);
 }
-function setMinLeads(n){MIN_LEADS=n;document.querySelectorAll('[data-min]').forEach(el=>el.classList.toggle('on',+el.dataset.min===n));renderChanTbl(aggData().camps);}
+function setMinLeads(n){MIN_LEADS=n;document.querySelectorAll('[data-min]').forEach(el=>el.classList.toggle('on',+el.dataset.min===n));renderChanTbl(aggData().camps,aggChannelSpend());}
 
 // ═══════════════════════════════════════════════════════════
 // TRENDS
@@ -2093,12 +2082,28 @@ function aggExpense(){
       ?Math.round((supplied+yelp)*100)/100
       :supplied;
   };
+  // Campaign - Meta is the source of truth for Meta/Facebook property allocation
+  // whenever that campaign sheet contains the week. For older weeks, fall back
+  // to the Expense sheet's Meta Ads Cost. This fixes property-level CPL without
+  // inventing spend for periods where no Meta campaign detail exists.
+  const metaWeeks=new Set(META_CAMPAIGN_DATA.map(m=>m.week).filter(Boolean));
+  const metaSpendFor=(week,property)=>META_CAMPAIGN_DATA
+    .filter(m=>m.week===week&&m.property===property)
+    .reduce((sum,m)=>sum+(m.spend||0),0);
+
   const rows=EXPENSE_DATA.filter(r=>{
     if(ep.length>0&&!ep.includes(r.property))return false;
     if(ew.length>0&&!ew.includes(r.week))return false;
     if(applyMonth&&!SEL_MONTHS.includes(r.month))return false;
     return true;
-  }).map(r=>({...r,total:totalWithYelp(r)}));
+  }).map(r=>{
+    const correctedTotal=totalWithYelp(r);
+    if(!metaWeeks.has(r.week))return {...r,total:correctedTotal};
+    const oldMeta=r.meta||0;
+    const meta=Math.round(metaSpendFor(r.week,r.property)*100)/100;
+    const total=Math.round((correctedTotal-oldMeta+meta)*100)/100;
+    return {...r,meta,total};
+  });
   const T={gads:0,meta:0,zillow:0,apts:0,yelp:0,total:0};
   rows.forEach(r=>{T.gads+=r.gads;T.meta+=r.meta;T.zillow+=r.zillow;T.apts+=r.apts;T.yelp+=(r.yelp||0);T.total+=r.total;});
   const pm={};
