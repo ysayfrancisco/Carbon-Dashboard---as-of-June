@@ -192,7 +192,7 @@ body.col-resizing{cursor:col-resize!important;user-select:none!important;}
         </div>
         <div class="port-benchmark-grid" id="port-benchmark-grid"></div>
       </div>
-      <div class="funnel" id="port-funnel"></div><div class="card-sub" style="margin:-10px 0 16px">Tour counts are weekly events; the Tour→Show rate follows people who booked during the selected period.</div>
+      <div class="funnel" id="port-funnel"></div><div class="card-sub" style="margin:-10px 0 16px">Overview Show% = tours attended ÷ tours booked within the selected week or period, using weekly event totals.</div>
       <div class="two-col">
         <div class="card"><div class="card-hd"><div><div class="card-title">Weekly Trend</div><div class="card-sub">Last 6 weeks — Leads, Tours & Leases</div></div></div><div class="chart-wrap"><canvas id="chart-trend"></canvas></div><div class="tbl-wrap" style="margin-top:12px"><table id="tbl-port-weekly-trend"></table></div></div>
         <div class="card"><div class="card-hd"><div><div class="card-title">Leads by Property</div><div class="card-sub" style="color:var(--blue);font-weight:600;">👆 Click a bar to drill down</div></div></div><div class="chart-wrap"><canvas id="chart-props"></canvas></div></div>
@@ -598,8 +598,8 @@ const CPL_LIMIT=100;
 const CPLEASE_LIMIT=400;
 const PLACEHOLDER_PROPS=[];
 
-const ESTABLISHED_PORTFOLIO=["Capri Palms","Claxton Pecan","Lakeside Lakeview Apartments","Lamar Lofts","Landings at North Ingle","The Benton Apartment Homes","The Kenzie","Westminster Club","Berry Falls"];
-const RAMP_UP_PORTFOLIO=["Ingleside Terrace","RATO","Hills at Hoover","Santa Fe","Villa Siena Apartments"];
+const ESTABLISHED_PORTFOLIO=["Capri Palms","Claxton Pecan","Lakeside Lakeview Apartments","Lamar Lofts","Landings at North Ingle","The Benton Apartment Homes","The Kenzie","Westminster Club","Berry Falls","Ingleside Terrace","RATO"];
+const RAMP_UP_PORTFOLIO=["Hills at Hoover","Santa Fe","Villa Siena Apartments"];
 function isRampUpProperty(name){return RAMP_UP_PORTFOLIO.includes(String(name||'').trim());}
 function propertyGroupLabel(name){return isRampUpProperty(name)?'Ramp-Up Properties':'Established Properties';}
 function propertyGroupRank(name){return isRampUpProperty(name)?1:0;}
@@ -1468,26 +1468,36 @@ function init(){
 // ═══════════════════════════════════════════════════════════
 // WEEK RANGES (for lead date → week label mapping)
 // ═══════════════════════════════════════════════════════════
+function parseDashboardCalendarDate(value){
+  if(!value)return null;
+  const s=String(value).trim();
+  const iso=s.match(/^(\d{4})-(\d{1,2})-(\d{1,2})$/);
+  if(iso)return new Date(+iso[1],+iso[2]-1,+iso[3]);
+  const us=s.match(/^(\d{1,2})\/(\d{1,2})\/(\d{4})$/);
+  if(us)return new Date(+us[3],+us[1]-1,+us[2]);
+  const d=new Date(s);
+  return isNaN(d)?null:d;
+}
 function buildWeekRanges(){
   const weekStartMap={};
   RAW.forEach(r=>{
     if(r['Week']&&r['Week Start Date']&&!weekStartMap[r['Week']]){
-      const d=new Date(r['Week Start Date']);
-      if(!isNaN(d)) weekStartMap[r['Week']]=d;
+      const d=parseDashboardCalendarDate(r['Week Start Date']);
+      if(d&&!isNaN(d)) weekStartMap[r['Week']]=d;
     }
   });
   const labels=Object.keys(weekStartMap).sort((a,b)=>weekStartMap[a]-weekStartMap[b]);
   WEEK_RANGES=labels.map((label,i)=>{
     const start=weekStartMap[label];
     const nextLabel=labels[i+1];
-    const end=nextLabel?new Date(weekStartMap[nextLabel].getTime()-1):new Date(start.getTime()+7*86400000-1);
+    const end=nextLabel?new Date(weekStartMap[nextLabel].getTime()-1):new Date(start.getFullYear(),start.getMonth(),start.getDate()+7,0,0,0,-1);
     return{label,start,end};
   });
 }
 function getWeekLabel(dateStr){
   if(!dateStr)return null;
-  const d=new Date(dateStr);
-  if(isNaN(d))return null;
+  const d=parseDashboardCalendarDate(dateStr);
+  if(!d||isNaN(d))return null;
   for(const w of WEEK_RANGES){if(d>=w.start&&d<=w.end)return w.label;}
   return null;
 }
@@ -1741,6 +1751,8 @@ function getOccupancyMap(){
 // PORTFOLIO
 // ═══════════════════════════════════════════════════════════
 function renderPortfolio({T,props}){
+  const overviewShowRate=(booked,attended)=>booked>0?attended/booked:0;
+  const showRate=overviewShowRate(T.toursB,T.toursA);
   const portExp=aggExpense().T;
   const portCPLease=T.leases>0?portExp.total/T.leases:0;
   const establishedCPL=portfolioTierCPL(ESTABLISHED_PORTFOLIO);
@@ -1753,10 +1765,10 @@ function renderPortfolio({T,props}){
   document.getElementById('port-kpis').innerHTML=[
     {lbl:'Total Leads',val:fmt(T.leads),sub:'all sources',c:'blue',metric:'leads'},
     {lbl:'Tours Booked',val:fmt(T.toursB),sub:`${pct(T.toursB/(T.leads||1))} of leads`,c:'blue',metric:'toursBooked'},
-    {lbl:'Tours Attended',val:fmt(T.toursA),sub:`${pct(T.showRate)} show rate`,c:'green',metric:'toursAttended'},
+    {lbl:'Tours Attended',val:fmt(T.toursA),sub:`${pct(showRate)} show rate`,c:'green',metric:'toursAttended'},
     {lbl:'Leases Signed',val:fmt(T.leases),sub:`${pct(T.l2l)} L2L`,c:'green'},
-    {lbl:'Established CPL',val:establishedCPL.cpl!=null?fmtUSD(establishedCPL.cpl):'—',sub:tierSub(establishedCPL,'9 established properties · spend ÷ leads'),c:'purple'},
-    {lbl:'Ramp-Up CPL',val:rampUpCPL.cpl!=null?fmtUSD(rampUpCPL.cpl):'—',sub:tierSub(rampUpCPL,'5 ramp-up properties · spend ÷ leads'),c:'purple'},
+    {lbl:'Established CPL',val:establishedCPL.cpl!=null?fmtUSD(establishedCPL.cpl):'—',sub:tierSub(establishedCPL,`${ESTABLISHED_PORTFOLIO.length} established properties · spend ÷ leads`),c:'purple'},
+    {lbl:'Ramp-Up CPL',val:rampUpCPL.cpl!=null?fmtUSD(rampUpCPL.cpl):'—',sub:tierSub(rampUpCPL,`${RAMP_UP_PORTFOLIO.length} ramp-up properties · spend ÷ leads`),c:'purple'},
     {lbl:'Cost / Lease',val:portCPLease>0?fmtUSD(portCPLease):'—',sub:`Spend ÷ leases (limit $${CPLEASE_LIMIT})`,c:'purple'},
     {lbl:'Engaged Leads',val:fmt(T.engaged),sub:`${pct(T.engRate)} rate`,c:'orange'},
   ].map(k=>`<div class="kpi ${k.c}${k.metric?` clickable`:''}" ${k.metric?`onclick="openModal('${k.metric}',null)" title="Click to view lead list"`:''}>
@@ -1803,7 +1815,7 @@ function renderPortfolio({T,props}){
   }
 
   const leadTourScore=scoreT.leads>0?scoreT.toursB/scoreT.leads:null;
-  const tourShowScore=scoreT.toursB>0?scoreT.showRate:null;
+  const tourShowScore=scoreT.toursB>0?overviewShowRate(scoreT.toursB,scoreT.toursA):null;
   const leadLeaseScore=scoreT.leads>0?scoreT.leases/scoreT.leads:null;
   const scoreMetrics=[
     {lbl:'Lead → Tour',actual:leadTourScore,target:CONV_TARGETS.leadToTour,accent:'#1e6fb5'},
@@ -1854,7 +1866,7 @@ function renderPortfolio({T,props}){
     ].map(w=>`<div class="wow-card"><div class="wow-icon">${w.icon}</div><div><div class="wow-lbl">${w.lbl}</div><div class="wow-val">${fmt(w.cur)}</div>${wowDelta(w.cur,w.prev)}</div></div>`).join('');
   }
 
-  const fn=[{lbl:'Leads',val:T.leads,r:null},{lbl:'Engaged',val:T.engaged,r:T.leads>0?T.engaged/T.leads:0},{lbl:'Tours Bkd',val:T.toursB,r:T.leads>0?T.toursB/T.leads:0},{lbl:'Tours Att',val:T.toursA,r:T.showRate},{lbl:'Leases',val:T.leases,r:T.toursA>0?T.leases/T.toursA:0}];
+  const fn=[{lbl:'Leads',val:T.leads,r:null},{lbl:'Engaged',val:T.engaged,r:T.leads>0?T.engaged/T.leads:0},{lbl:'Tours Bkd',val:T.toursB,r:T.leads>0?T.toursB/T.leads:0},{lbl:'Tours Att',val:T.toursA,r:showRate},{lbl:'Leases',val:T.leases,r:T.toursA>0?T.leases/T.toursA:0}];
   document.getElementById('port-funnel').innerHTML=fn.map(s=>`<div class="fn-step"><div class="fn-val">${fmt(s.val)}</div><div class="fn-lbl">${s.lbl}</div>${s.r!=null?`<div class="fn-rate">${pct(s.r)}</div>`:''}</div>`).join('');
 
   const latest6=get6LatestWeeks();
@@ -1888,7 +1900,7 @@ function renderPortfolio({T,props}){
     const cpl=(spend>0&&p.leads>0)?spend/p.leads:null;
     const cpLease=(spend>0&&p.leases>0)?spend/p.leases:null;
     const comp=compStatus(cpl,cpLease);
-    return{...p,leadToTour:p.leads>0?p.toursA/p.leads:0,spend,cpl,cpLease,compliance:comp.txt,_compColor:comp.c,_compFlag:comp.flag,units:o.units??null,occRate:o.occRate??null,leasedPct:o.leasedPct??null,occTrend:o.occTrend??null,available:o.available??null};});
+    return{...p,showRate:overviewShowRate(p.toursB,p.toursA),leadToTour:p.leads>0?p.toursA/p.leads:0,spend,cpl,cpLease,compliance:comp.txt,_compColor:comp.c,_compFlag:comp.flag,units:o.units??null,occRate:o.occRate??null,leasedPct:o.leasedPct??null,occTrend:o.occTrend??null,available:o.available??null};});
   PLACEHOLDER_PROPS.forEach(pn=>{if(!propsWithOcc.some(x=>x.name===pn))propsWithOcc.push({name:pn,_ph:true,leads:null,toursB:null,toursA:null,leadToTour:null,leases:null,engaged:null,showRate:null,l2l:null,t2l:null,engRate:null,cpl:null,cpLease:null,compliance:'—',_compColor:'var(--text3)',_compFlag:false,units:null,occRate:null,leasedPct:null,occTrend:null,available:null});});
   const summaryCols=[
     {key:'name',label:'Property',numeric:false},{key:'leads',label:'Leads',numeric:true},
@@ -1925,7 +1937,7 @@ function renderPortfolio({T,props}){
     <td>Portfolio Total</td>
     <td class="mono">${fmt(t.leads)}</td>
     <td class="mono">${fmt(t.toursB)}</td><td class="mono">${fmt(t.toursA)}</td>
-    <td class="mono">${pct(t.leads>0?t.toursA/t.leads:0)}</td><td class="mono">${pct(t.showRate)}</td><td class="mono">${fmt(t.leases)}</td>
+    <td class="mono">${pct(t.leads>0?t.toursA/t.leads:0)}</td><td class="mono">${pct(overviewShowRate(t.toursB,t.toursA))}</td><td class="mono">${fmt(t.leases)}</td>
     <td><span class="badge">${pct(t.l2l)}</span></td><td class="mono">${pct(t.t2l)}</td>
     <td class="mono">${fmt(t.engaged)}</td><td class="mono">${pct(t.engRate)}</td>
     <td class="mono">${occPhysicalTotal!=null?occPhysicalTotal.toFixed(1)+'%':'—'}</td>
